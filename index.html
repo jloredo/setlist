@@ -66,6 +66,15 @@
   .sel{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;max-width:220px}
   #shareBanner{background:rgba(59,130,246,.12);border:1px solid var(--accent2);border-radius:12px;padding:12px 15px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13.5px}
   #shareBanner .bt{font-weight:700;color:var(--txt)} #shareBanner .sp{flex:1}
+  .lib{max-height:320px;overflow:auto;margin-top:8px}
+  .chrow{display:flex;align-items:center;gap:10px;padding:7px 6px;border-radius:9px;cursor:pointer;border-bottom:1px solid rgba(39,45,56,.4)}
+  .chrow:hover{background:var(--panel2)} .chrow.sel{background:rgba(59,130,246,.13)} .chrow.added{opacity:.5}
+  .chk{width:18px;height:18px;border-radius:5px;border:2px solid var(--line);flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff}
+  .chrow.sel .chk{background:var(--accent2);border-color:var(--accent2)}
+  .chrow .cth{width:56px;height:32px;border-radius:5px;flex:none;object-fit:cover;background:#000}
+  .chrow .ct{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chrow .cbadge{font-size:10px;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:1px 6px;flex:none}
+  .chrow.hit .ct{color:var(--accent2)}
   #set{list-style:none;margin:0;padding:8px;position:relative;min-height:56px}
   .empty{color:var(--muted);text-align:center;padding:26px 14px;font-size:13.5px}
   .item{background:var(--panel2);border:1px solid var(--line);border-radius:11px;margin-bottom:8px;touch-action:none}
@@ -146,6 +155,7 @@
       <h2>Agregar temas</h2><div class="sp"></div>
       <div class="tabs">
         <button class="tab on" data-tab="yt"><span class="ic" style="color:var(--yt)">▶</span> YouTube</button>
+        <button class="tab" data-tab="ch"><span class="ic" style="color:var(--yt)">📺</span> Canal YSY A</button>
         <button class="tab" data-tab="sp"><span class="ic" style="color:var(--accent)">♫</span> Spotify</button>
       </div>
     </div>
@@ -173,6 +183,25 @@
           </ol>
         </details>
       </div>
+    </div>
+    <!-- Canal YSY A pane -->
+    <div class="pane" id="pane-ch">
+      <div class="prow" style="margin-top:0">
+        <button class="primary" id="chanLoad">Cargar videos del canal</button>
+        <span class="hint" id="chanCount">Canal YSY A · @ysy__a</span>
+      </div>
+      <textarea id="chanTitles" placeholder="Pegá los títulos de las canciones, uno por línea, y tocá 'Buscar y seleccionar' para auto-marcar los que coincidan." style="margin-top:10px;min-height:56px"></textarea>
+      <div class="prow">
+        <button class="sm primary" id="chanMatch">Buscar y seleccionar</button>
+        <input id="chanFilter" placeholder="…o filtrá la lista por título" style="flex:1;min-width:120px">
+      </div>
+      <div class="prow">
+        <button class="sm" id="chanSelAll">Seleccionar todo</button>
+        <button class="sm" id="chanClearSel">Limpiar</button>
+        <div class="sp" style="flex:1"></div>
+        <button class="sm primary" id="chanAdd" disabled>Agregar (0) al set ↓</button>
+      </div>
+      <div class="lib" id="chanList"></div>
     </div>
   </div>
 
@@ -348,30 +377,77 @@ function loadLinks(){
   if(bad.length){err.style.display="block";err.textContent="No entendí "+bad.length+" link(s).";} else err.style.display="none";
   persist(); renderSet();
 }
-/* expande una playlist a sus videos usando el reproductor de YouTube (sin API key) */
-function loadPlaylistById(plid){
-  if(!(window.YT && YT.Player)){ toast("YouTube todavía cargando, probá en un segundo…"); return; }
-  toast("Cargando playlist…");
+/* lee los IDs de una playlist con el reproductor de YouTube (sin API key) */
+function fetchPlaylistIds(plid, onDone){
+  if(!(window.YT && YT.Player)){ toast("YouTube todavía cargando, probá en un segundo…"); onDone(null); return; }
   let done=false, tries=0;
   const holder=document.createElement("div");
   holder.style.cssText="position:fixed;left:-9999px;top:-9999px;width:200px;height:120px";
   document.body.appendChild(holder);
   const probe=new YT.Player(holder,{height:"120",width:"200",
     playerVars:{listType:"playlist",list:plid,autoplay:0},
-    events:{
-      onReady:e=>{ try{e.target.mute();}catch(_){} grab(e.target); },
-      onStateChange:e=>grab(e.target),
-      onError:()=>finish(null)
-    }});
+    events:{ onReady:e=>{ try{e.target.mute();}catch(_){} grab(e.target); }, onStateChange:e=>grab(e.target), onError:()=>finish(null) }});
   const poll=setInterval(()=>{ tries++; grab(probe); if(tries>25 && !done) finish(null); },400);
-  function grab(p){ if(done)return; let ids=null; try{ids=p.getPlaylist();}catch(e){}
-    if(ids && ids.length) finish(ids); }
-  function finish(ids){ if(done)return; done=true; clearInterval(poll);
-    try{probe.destroy();}catch(e){} holder.remove();
-    if(!ids){ toast("No pude leer la playlist (¿es pública o 'no listada'?)."); return; }
-    let added=0; ids.forEach(v=>{ if(addYtVid(v)) added++; });
-    persist(); renderSet(); toast(added?(added+" tema(s) agregados de la playlist"):"Esos temas ya estaban en el set"); }
+  function grab(p){ if(done)return; let ids=null; try{ids=p.getPlaylist();}catch(e){} if(ids && ids.length) finish(ids); }
+  function finish(ids){ if(done)return; done=true; clearInterval(poll); try{probe.destroy();}catch(e){} holder.remove(); onDone(ids&&ids.length?ids:null); }
 }
+function loadPlaylistById(plid){ toast("Cargando playlist…");
+  fetchPlaylistIds(plid, ids=>{ if(!ids){ toast("No pude leer la playlist (¿es pública o 'no listada'?)."); return; }
+    let added=0; ids.forEach(v=>{ if(addYtVid(v)) added++; });
+    persist(); renderSet(); toast(added?(added+" tema(s) agregados de la playlist"):"Esos temas ya estaban en el set"); }); }
+
+/* ===== Canal YSY A (sin API key) ===== */
+const CHANNEL={id:"UC6ZqzTu-T77_yp1TCIIy93g", uploads:"UU6ZqzTu-T77_yp1TCIIy93g", name:"YSY A"};
+let channelVideos=[]; const chanSel=new Set();
+function chanPersist(){ try{localStorage.setItem("ys_chan",JSON.stringify(channelVideos));}catch(e){} }
+function chanRestore(){ try{channelVideos=JSON.parse(localStorage.getItem("ys_chan")||"[]");}catch(e){channelVideos=[];} }
+function norm(s){ return (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\(.*?\)|\[.*?\]/g," ").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); }
+function loadChannel(){
+  toast("Cargando videos del canal…");
+  fetchPlaylistIds(CHANNEL.uploads, ids=>{ if(!ids){ toast("No pude leer el canal. Reintentá en un segundo."); return; }
+    const known=new Map(channelVideos.map(c=>[c.vid,c.title]));
+    channelVideos = ids.map(v=>({vid:v, title:known.get(v)||""}));
+    chanPersist(); renderChannel();
+    channelVideos.forEach(cv=>{ if(!cv.title) chanFetchTitle(cv); });
+    toast(ids.length+" videos del canal"); });
+}
+function chanFetchTitle(cv){
+  fetch("https://www.youtube.com/oembed?format=json&url=https://youtu.be/"+cv.vid)
+    .then(r=>r.ok?r.json():Promise.reject()).then(d=>{ if(d&&d.title){ cv.title=d.title; chanPersist(); updateChanRow(cv); } }).catch(()=>{});
+}
+function renderChannel(){
+  const box=gid("chanList"); if(!box)return; const f=norm(gid("chanFilter").value);
+  gid("chanCount").textContent = channelVideos.length? (channelVideos.length+" videos · YSY A") : "Canal YSY A · @ysy__a";
+  box.innerHTML="";
+  if(!channelVideos.length){ box.innerHTML='<div class="empty">Tocá "Cargar videos del canal" para traer todos los videos de YSY A.</div>'; updateChanAdd(); return; }
+  const list=channelVideos.filter(cv=> !f || norm(cv.title).includes(f) || !cv.title);
+  list.forEach(cv=>{
+    const added=setlist.some(x=>x.source==="yt"&&x.yt&&x.yt.vid===cv.vid);
+    const sel=chanSel.has(cv.vid);
+    const row=document.createElement("div"); row.className="chrow"+(sel?" sel":"")+(added?" added":""); row.dataset.vid=cv.vid;
+    row.innerHTML=`<div class="chk">${sel?"✓":""}</div>
+      <img class="cth" src="${ythumb(cv.vid)}" onerror="this.style.visibility='hidden'">
+      <div class="ct">${esc(cv.title)||("cargando… · "+cv.vid)}</div>
+      ${added?'<span class="cbadge">EN EL SET</span>':''}`;
+    row.addEventListener("click",()=>{ if(added)return; sel?chanSel.delete(cv.vid):chanSel.add(cv.vid); renderChannel(); });
+    box.appendChild(row);
+  });
+  updateChanAdd();
+}
+function updateChanRow(cv){ const el=document.querySelector('#chanList .chrow[data-vid="'+cv.vid+'"] .ct'); if(el) el.textContent=cv.title; }
+function updateChanAdd(){ const n=chanSel.size; const b=gid("chanAdd"); if(!b)return; b.disabled=!n; b.textContent=`Agregar (${n}) al set ↓`; }
+function chanMatch(){
+  if(!channelVideos.length){ toast("Primero cargá los videos del canal"); return; }
+  const lines=gid("chanTitles").value.split(/\n+/).map(s=>s.trim()).filter(Boolean); let matched=0, miss=[];
+  lines.forEach(p=>{ const np=norm(p); if(np.length<2)return;
+    const hit=channelVideos.find(cv=>cv.title && norm(cv.title).includes(np))
+           || channelVideos.find(cv=>cv.title && np.includes(norm(cv.title)) && norm(cv.title).length>3);
+    if(hit){ if(!setlist.some(x=>x.source==="yt"&&x.yt&&x.yt.vid===hit.vid)) chanSel.add(hit.vid); matched++; }
+    else miss.push(p); });
+  renderChannel();
+  toast(matched+" coincidencia(s)"+(miss.length?` · sin match: ${miss.slice(0,3).join(", ")}${miss.length>3?"…":""}`:""));
+}
+function chanAddSelected(){ let added=0; chanSel.forEach(v=>{ if(addYtVid(v))added++; }); chanSel.clear(); persist(); renderSet(); renderChannel(); toast(added?added+" agregados al set":"Nada nuevo para agregar"); }
 function ytFetchTitle(it){
   fetch("https://www.youtube.com/oembed?format=json&url=https://youtu.be/"+it.yt.vid)
     .then(r=>r.ok?r.json():Promise.reject()).then(d=>{ if(d){ it.title=d.title||it.title; it.artist=d.author_name||"YouTube"; persist(); updateRow(it); if(it.uid===curUid)renderTransport(); } })
@@ -653,6 +729,15 @@ function init(){
   gid("impFile").addEventListener("change",e=>{ if(e.target.files[0])importJson(e.target.files[0]); e.target.value=""; });
   refreshLists();
   checkSharedSet();
+
+  // canal YSY A
+  gid("chanLoad").addEventListener("click",loadChannel);
+  gid("chanMatch").addEventListener("click",chanMatch);
+  gid("chanFilter").addEventListener("input",renderChannel);
+  gid("chanSelAll").addEventListener("click",()=>{ const f=norm(gid("chanFilter").value); channelVideos.forEach(cv=>{ if((!f||norm(cv.title).includes(f)) && !setlist.some(x=>x.source==="yt"&&x.yt&&x.yt.vid===cv.vid)) chanSel.add(cv.vid); }); renderChannel(); });
+  gid("chanClearSel").addEventListener("click",()=>{ chanSel.clear(); renderChannel(); });
+  gid("chanAdd").addEventListener("click",chanAddSelected);
+  chanRestore(); renderChannel();
 
   renderSet();
 }
