@@ -63,6 +63,9 @@
   .totals{display:flex;gap:22px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
   .totals .t{display:flex;flex-direction:column} .totals .t .n{font-size:20px;font-weight:800} .totals .t .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
   .settoolbar{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center}
+  .sel{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;max-width:220px}
+  #shareBanner{background:rgba(59,130,246,.12);border:1px solid var(--accent2);border-radius:12px;padding:12px 15px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13.5px}
+  #shareBanner .bt{font-weight:700;color:var(--txt)} #shareBanner .sp{flex:1}
   #set{list-style:none;margin:0;padding:8px;position:relative;min-height:56px}
   .empty{color:var(--muted);text-align:center;padding:26px 14px;font-size:13.5px}
   .item{background:var(--panel2);border:1px solid var(--line);border-radius:11px;margin-bottom:8px;touch-action:none}
@@ -135,6 +138,7 @@
 
 <main>
   <div class="tip">Sumá temas por <b>link de YouTube</b> o <b>buscando en Spotify</b>. Ordená arrastrando, marcá <b>IN</b> (arranque) y <b>OUT</b> (auto-stop) por canción, y movete por el audio con la barra de abajo. Todo se guarda solo en este navegador.</div>
+  <div id="shareBanner" style="display:none"></div>
 
   <!-- AGREGAR -->
   <div class="card">
@@ -147,8 +151,8 @@
     </div>
     <!-- YT pane -->
     <div class="pane on" id="pane-yt">
-      <textarea id="links" placeholder="Pegá links de YouTube, uno por línea (watch, youtu.be o shorts). También sirven inéditos 'no listados'."></textarea>
-      <div class="prow"><button class="primary" id="loadBtn">Cargar al set</button><span class="hint">Podés pegar varios de una.</span></div>
+      <textarea id="links" placeholder="Pegá links de YouTube, uno por línea: videos (watch, youtu.be, shorts) o una playlist entera (playlist?list=...). También sirven inéditos 'no listados'."></textarea>
+      <div class="prow"><button class="primary" id="loadBtn">Cargar al set</button><span class="hint">Videos sueltos o el link de una playlist (se cargan todos sus temas).</span></div>
       <div class="err" id="ytErr"></div>
     </div>
     <!-- SP pane -->
@@ -182,8 +186,19 @@
     <div class="settoolbar">
       <button class="primary sm" id="playAll">▶ Reproducir en orden</button>
       <div class="sp" style="flex:1"></div>
-      <button class="sm" id="expTxt">Exportar TXT</button>
-      <button class="sm" id="expCsv">Exportar CSV</button>
+      <button class="sm" id="shareLink">📤 Enviar al artista</button>
+      <button class="sm" id="expTxt">TXT</button>
+      <button class="sm" id="expCsv">CSV</button>
+    </div>
+    <div class="settoolbar" style="border-top:none;padding-top:0">
+      <input id="listName" placeholder="Nombre de la lista…" style="max-width:190px">
+      <button class="sm primary" id="saveList">Guardar lista</button>
+      <select id="loadList" class="sel"><option value="">Cargar lista guardada…</option></select>
+      <button class="sm" id="delList" title="Borrar la lista elegida">🗑</button>
+      <div class="sp" style="flex:1"></div>
+      <button class="sm" id="expJson">Bajar archivo</button>
+      <button class="sm" id="impBtn">Importar</button>
+      <input type="file" id="impFile" accept=".json,application/json" style="display:none">
     </div>
     <ul id="set"></ul>
   </div>
@@ -206,7 +221,7 @@
 /* ============ estado ============ */
 const SCOPES="streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state";
 const REDIRECT_URI=location.origin+location.pathname;
-const LS={cid:"ys_cid",tok:"ys_tok",set:"ys_set",ver:"ys_ver"};
+const LS={cid:"ys_cid",tok:"ys_tok",set:"ys_set",ver:"ys_ver",lists:"ys_lists"};
 let setlist=[];                 // items
 let curUid=null, playingUid=null, playingAll=false, watch=null;
 const openSet=new Set();
@@ -237,6 +252,7 @@ function onYtState(e){
   const it=cur(); if(!it||it.source!=="yt")return;
   if(e.data===YT.PlayerState.PLAYING){
     if(it.err){ it.err=null; updateRow(it); }
+    if(!it.title){ try{ const vd=yt.getVideoData(); if(vd&&vd.title){ it.title=vd.title; if(vd.author)it.artist=vd.author; persist(); updateRow(it); if(it.uid===curUid)renderTransport(); } }catch(e2){} }
     const d=yt.getDuration(); if(d>0 && (!it.d || Math.abs(it.d-d)>1)){ it.d=d; if(!it.end||it.end>d) it.end=d; persist(); renderSet(); }
     playingUid=it.uid; renderPlayBtns(); startWatch();
   }
@@ -314,16 +330,47 @@ function parseId(u){ u=(u||"").trim(); let m;
   if((m=u.match(/embed\/([\w-]{11})/)))return m[1];
   if(/^[\w-]{11}$/.test(u))return u; return null;
 }
+function parsePlaylist(u){ const m=u.match(/[?&]list=([\w-]+)/); if(!m)return null;
+  if(/[?&]v=[\w-]{11}/.test(u))return null;           // watch?v=..&list=.. -> lo tratamos como video suelto
+  const id=m[1]; if(/^(WL|LL)$/i.test(id))return null; // "Ver más tarde"/"Me gusta" no son accesibles
+  return id; }
+function addYtVid(vid){ if(setlist.some(x=>x.source==="yt"&&x.yt&&x.yt.vid===vid))return false;
+  const it={uid:uid(),source:"yt",yt:{vid},title:"",artist:"YouTube",art:ythumb(vid),d:null,in:0,end:0,pos:0};
+  setlist.push(it); ytFetchTitle(it); return true; }
 function loadLinks(){
-  const raw=gid("links").value.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean); let bad=[],added=0;
-  raw.forEach(u=>{ const vid=parseId(u); if(!vid){bad.push(u);return;}
-    if(setlist.some(x=>x.source==="yt"&&x.yt&&x.yt.vid===vid))return;
-    const it={uid:uid(),source:"yt",yt:{vid},title:"",artist:"YouTube",art:ythumb(vid),d:null,in:0,end:0,pos:0};
-    setlist.push(it); added++; ytFetchTitle(it);
+  const raw=gid("links").value.split(/[\n]+/).map(s=>s.trim()).filter(Boolean); let bad=[];
+  raw.forEach(u=>{
+    const pl=parsePlaylist(u); if(pl){ loadPlaylistById(pl); return; }
+    const vid=parseId(u); if(!vid){bad.push(u);return;}
+    addYtVid(vid);
   });
   gid("links").value=""; const err=gid("ytErr");
   if(bad.length){err.style.display="block";err.textContent="No entendí "+bad.length+" link(s).";} else err.style.display="none";
   persist(); renderSet();
+}
+/* expande una playlist a sus videos usando el reproductor de YouTube (sin API key) */
+function loadPlaylistById(plid){
+  if(!(window.YT && YT.Player)){ toast("YouTube todavía cargando, probá en un segundo…"); return; }
+  toast("Cargando playlist…");
+  let done=false, tries=0;
+  const holder=document.createElement("div");
+  holder.style.cssText="position:fixed;left:-9999px;top:-9999px;width:200px;height:120px";
+  document.body.appendChild(holder);
+  const probe=new YT.Player(holder,{height:"120",width:"200",
+    playerVars:{listType:"playlist",list:plid,autoplay:0},
+    events:{
+      onReady:e=>{ try{e.target.mute();}catch(_){} grab(e.target); },
+      onStateChange:e=>grab(e.target),
+      onError:()=>finish(null)
+    }});
+  const poll=setInterval(()=>{ tries++; grab(probe); if(tries>25 && !done) finish(null); },400);
+  function grab(p){ if(done)return; let ids=null; try{ids=p.getPlaylist();}catch(e){}
+    if(ids && ids.length) finish(ids); }
+  function finish(ids){ if(done)return; done=true; clearInterval(poll);
+    try{probe.destroy();}catch(e){} holder.remove();
+    if(!ids){ toast("No pude leer la playlist (¿es pública o 'no listada'?)."); return; }
+    let added=0; ids.forEach(v=>{ if(addYtVid(v)) added++; });
+    persist(); renderSet(); toast(added?(added+" tema(s) agregados de la playlist"):"Esos temas ya estaban en el set"); }
 }
 function ytFetchTitle(it){
   fetch("https://www.youtube.com/oembed?format=json&url=https://youtu.be/"+it.yt.vid)
@@ -523,6 +570,54 @@ function exportCsv(){ let o="orden,fuente,titulo,artista,in,out,duracion_efectiv
     o+=[i+1,it.source,`"${(it.title||"").replace(/"/g,'""')}"`,`"${(it.artist||"").replace(/"/g,'""')}"`,it.d!=null?fmt(it.in):"",it.d!=null?fmt(it.end):"",eff!==""?fmt(eff):"",ref].join(",")+"\n"; });
   download("setlist-ysya.csv",o,"text/csv"); }
 
+/* ============ listas guardadas y compartir ============ */
+function b64enc(str){ return btoa(unescape(encodeURIComponent(str))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function b64dec(s){ s=s.replace(/-/g,"+").replace(/_/g,"/"); return decodeURIComponent(escape(atob(s))); }
+function compact(list){ return list.map(x=> x.source==="yt"
+  ? {s:"y",v:x.yt.vid,t:x.title||"",a:x.artist||"",i:Math.round(x.in||0),e:Math.round(x.end||0),d:Math.round(x.d||0)}
+  : {s:"p",u:x.sp.uri,id:x.sp.id,t:x.title||"",a:x.artist||"",r:x.art||"",i:Math.round(x.in||0),e:Math.round(x.end||0),d:Math.round(x.d||0)} ); }
+function expand(arr){ return (arr||[]).map(o=> o.s==="y"
+  ? {uid:uid(),source:"yt",yt:{vid:o.v},title:o.t,artist:o.a||"YouTube",art:ythumb(o.v),d:o.d>0?o.d:null,in:o.i||0,end:o.e>0?o.e:0,pos:0}
+  : {uid:uid(),source:"sp",sp:{uri:o.u,id:o.id},title:o.t,artist:o.a,art:o.r||"",d:o.d>0?o.d:null,in:o.i||0,end:o.e>0?o.e:0,pos:0} ); }
+function getLists(){ try{return JSON.parse(localStorage.getItem(LS.lists)||"{}");}catch(e){return {};} }
+function setLists(o){ localStorage.setItem(LS.lists,JSON.stringify(o)); }
+function refreshLists(){ const sel=gid("loadList"); const o=getLists(); const names=Object.keys(o).sort();
+  sel.innerHTML='<option value="">Cargar lista guardada…</option>'+names.map(n=>`<option value="${esc(n)}">${esc(n)} (${o[n].length})</option>`).join(""); }
+function saveList(){ const name=gid("listName").value.trim(); if(!name){toast("Poné un nombre para la lista");return;}
+  if(!setlist.length){toast("El set está vacío");return;}
+  const o=getLists(); if(o[name] && !confirm(`Ya existe "${name}". ¿Sobrescribir?`)) return;
+  o[name]=compact(setlist); setLists(o); refreshLists(); gid("loadList").value=name; toast(`Lista "${name}" guardada`); }
+function loadListByName(name){ if(!name)return; const o=getLists(); if(!o[name])return;
+  if(setlist.length && !confirm(`Cargar "${name}" reemplaza el set actual. ¿Seguir?`)){ gid("loadList").value=""; return; }
+  setlist=expand(o[name]); curUid=null; playingUid=null; gid("listName").value=name; persist(); renderSet(); toast(`Lista "${name}" cargada`); }
+function deleteList(){ const name=gid("loadList").value; if(!name){toast("Elegí una lista para borrar");return;}
+  if(!confirm(`¿Borrar la lista "${name}"?`))return; const o=getLists(); delete o[name]; setLists(o); refreshLists(); toast(`Lista "${name}" borrada`); }
+function shareLink(){ if(!setlist.length){toast("El set está vacío");return;}
+  const payload=b64enc(JSON.stringify(compact(setlist)));
+  const url=location.origin+location.pathname+"#s="+payload;
+  if(url.length>16000){ toast("El set es muy grande para link; usá 'Bajar archivo' y envialo."); return; }
+  navigator.clipboard.writeText(url).then(()=>toast("Link copiado — pegáselo al artista")).catch(()=>{ prompt("Copiá este link para el artista:",url); }); }
+function exportJson(){ if(!setlist.length)return toast("Set vacío");
+  const name=(gid("listName").value.trim()||"setlist-ysya");
+  download(name.replace(/[^\w-]+/g,"_")+".json", JSON.stringify({name,tracks:compact(setlist)},null,2), "application/json"); }
+function importJson(file){ const r=new FileReader();
+  r.onload=()=>{ try{ const d=JSON.parse(r.result); const arr=Array.isArray(d)?d:(d.tracks||[]);
+      if(!arr.length){toast("El archivo no tiene temas");return;}
+      if(setlist.length && !confirm("Importar reemplaza el set actual. ¿Seguir?"))return;
+      setlist=expand(arr); curUid=null; playingUid=null; if(d.name)gid("listName").value=d.name; persist(); renderSet(); toast("Lista importada"); }
+    catch(e){ toast("No pude leer el archivo (¿es una lista válida?)"); } };
+  r.readAsText(file); }
+function checkSharedSet(){ if(!location.hash.startsWith("#s="))return;
+  let arr; try{ arr=JSON.parse(b64dec(location.hash.slice(3))); }catch(e){ return; }
+  history.replaceState({},"",location.pathname);
+  const b=gid("shareBanner"); b.style.display="flex";
+  b.innerHTML=`<span>📥 <b class="bt">Te compartieron un set de ${arr.length} tema(s).</b> ¿Cargarlo?</span><span class="sp"></span>`;
+  const load=document.createElement("button"); load.className="sm primary"; load.textContent="Cargar set";
+  load.onclick=()=>{ if(setlist.length && !confirm("Cargar reemplaza tu set actual. ¿Seguir?"))return;
+    setlist=expand(arr); curUid=null; playingUid=null; persist(); renderSet(); b.style.display="none"; toast("Set cargado"); };
+  const no=document.createElement("button"); no.className="sm ghost"; no.textContent="Descartar"; no.onclick=()=>b.style.display="none";
+  b.appendChild(load); b.appendChild(no); }
+
 /* ============ init ============ */
 function init(){
   gid("redirectUri").textContent=REDIRECT_URI;
@@ -548,7 +643,17 @@ function init(){
   gid("expCsv").addEventListener("click",()=>{ if(!setlist.length)return toast("Set vacío"); exportCsv(); });
   gid("ytClose").addEventListener("click",()=>ytShow(false));
 
-  // set delegation for remove (rm no está en rowmain; se maneja en render). Agrego botón rm en panel? -> usamos chevron/play; remove via long: add rm button
+  // listas + compartir
+  gid("saveList").addEventListener("click",saveList);
+  gid("loadList").addEventListener("change",e=>loadListByName(e.target.value));
+  gid("delList").addEventListener("click",deleteList);
+  gid("shareLink").addEventListener("click",shareLink);
+  gid("expJson").addEventListener("click",exportJson);
+  gid("impBtn").addEventListener("click",()=>gid("impFile").click());
+  gid("impFile").addEventListener("change",e=>{ if(e.target.files[0])importJson(e.target.files[0]); e.target.value=""; });
+  refreshLists();
+  checkSharedSet();
+
   renderSet();
 }
 document.addEventListener("DOMContentLoaded",init);
