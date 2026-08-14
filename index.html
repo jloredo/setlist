@@ -66,6 +66,16 @@
   .sel{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;max-width:220px}
   #shareBanner{background:rgba(59,130,246,.12);border:1px solid var(--accent2);border-radius:12px;padding:12px 15px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13.5px}
   #shareBanner .bt{font-weight:700;color:var(--txt)} #shareBanner .sp{flex:1}
+  #shareModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:70;align-items:center;justify-content:center;padding:16px}
+  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;max-width:360px;width:100%}
+  .mhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px} .mhead b{font-size:15px}
+  .mx{background:transparent;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:4px 6px}
+  .mhint{color:var(--muted);font-size:12.5px;margin:6px 0} .mhint b{color:var(--txt)}
+  .qrwrap{background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center;margin:8px 0}
+  .qrwrap img{width:100%;max-width:240px;height:auto;display:block}
+  .linkrow{display:flex;gap:8px;margin:8px 0}
+  .mfoot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px}
+  .curlist{color:var(--accent2);font-size:12.5px;font-weight:600}
   .lib{max-height:320px;overflow:auto;margin-top:8px}
   .chrow{display:flex;align-items:center;gap:10px;padding:7px 6px;border-radius:9px;cursor:pointer;border-bottom:1px solid rgba(39,45,56,.4)}
   .chrow:hover{background:var(--panel2)} .chrow.sel{background:rgba(59,130,246,.13)} .chrow.added{opacity:.5}
@@ -207,7 +217,7 @@
 
   <!-- SET -->
   <div class="card">
-    <div class="head"><h2>Setlist del show</h2><div class="sp"></div><button class="sm" id="clearSet">Vaciar</button></div>
+    <div class="head"><h2>Setlist del show</h2><span class="curlist" id="curList"></span><div class="sp"></div><button class="sm" id="clearSet">Vaciar</button></div>
     <div class="totals">
       <div class="t"><span class="n" id="cnt">0</span><span class="l">Temas</span></div>
       <div class="t"><span class="n" id="tot">0:00</span><span class="l">Duración (IN→OUT)</span></div>
@@ -243,6 +253,17 @@
 </div></div>
 
 <div id="ytpane"><button class="close" id="ytClose">✕</button><div id="ytframe"></div></div>
+
+<!-- modal compartir -->
+<div id="shareModal"><div class="modalbox">
+  <div class="mhead"><b>Enviar al artista</b><button class="mx" id="shareClose">✕</button></div>
+  <p class="mhint">Que el artista <b>escanee este QR con la cámara del celular</b> y se le abre el set. O pasale el link.</p>
+  <div class="qrwrap"><img id="shareQr" alt="QR del setlist"></div>
+  <div class="linkrow"><input id="shareUrlInput" readonly><button class="primary sm" id="shareCopy">Copiar</button></div>
+  <div class="mfoot"><span class="mhint" id="shareLen"></span><button class="sm" id="shareFileBtn">Descargar archivo (.json)</button></div>
+  <p class="mhint">Si el link es muy largo para WhatsApp, mandá el QR (como imagen) o el archivo, y que lo abra con “Importar”.</p>
+</div></div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -397,19 +418,28 @@ function loadPlaylistById(plid){ toast("Cargando playlist…");
     persist(); renderSet(); toast(added?(added+" tema(s) agregados de la playlist"):"Esos temas ya estaban en el set"); }); }
 
 /* ===== Canal YSY A (sin API key) ===== */
-const CHANNEL={id:"UC6ZqzTu-T77_yp1TCIIy93g", uploads:"UU6ZqzTu-T77_yp1TCIIy93g", name:"YSY A"};
+const CHANNEL={id:"UC6ZqzTu-T77_yp1TCIIy93g", videos:"UULF6ZqzTu-T77_yp1TCIIy93g", uploads:"UU6ZqzTu-T77_yp1TCIIy93g", name:"YSY A"};
 let channelVideos=[]; const chanSel=new Set();
 function chanPersist(){ try{localStorage.setItem("ys_chan",JSON.stringify(channelVideos));}catch(e){} }
 function chanRestore(){ try{channelVideos=JSON.parse(localStorage.getItem("ys_chan")||"[]");}catch(e){channelVideos=[];} }
 function norm(s){ return (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\(.*?\)|\[.*?\]/g," ").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); }
+function applyChannelIds(ids, label){
+  const known=new Map(channelVideos.map(c=>[c.vid,c.title]));
+  channelVideos = ids.map(v=>({vid:v, title:known.get(v)||""}));
+  chanPersist(); renderChannel();
+  channelVideos.forEach(cv=>{ if(!cv.title) chanFetchTitle(cv); });
+  toast(ids.length+" videos ("+label+")");
+}
 function loadChannel(){
-  toast("Cargando videos del canal…");
-  fetchPlaylistIds(CHANNEL.uploads, ids=>{ if(!ids){ toast("No pude leer el canal. Reintentá en un segundo."); return; }
-    const known=new Map(channelVideos.map(c=>[c.vid,c.title]));
-    channelVideos = ids.map(v=>({vid:v, title:known.get(v)||""}));
-    chanPersist(); renderChannel();
-    channelVideos.forEach(cv=>{ if(!cv.title) chanFetchTitle(cv); });
-    toast(ids.length+" videos del canal"); });
+  toast("Cargando la sección Videos del canal…");
+  // UULF = playlist automática de "solo videos" (la pestaña Videos, sin Shorts)
+  fetchPlaylistIds(CHANNEL.videos, ids=>{
+    if(ids){ applyChannelIds(ids, "sección Videos"); return; }
+    // respaldo: todo lo subido (por si el player no resuelve la UULF)
+    fetchPlaylistIds(CHANNEL.uploads, ids2=>{
+      if(!ids2){ toast("No pude leer el canal. Reintentá en un segundo."); return; }
+      applyChannelIds(ids2, "canal completo"); });
+  });
 }
 function chanFetchTitle(cv){
   fetch("https://www.youtube.com/oembed?format=json&url=https://youtu.be/"+cv.vid)
@@ -522,7 +552,7 @@ function renderSet(){
       attachMarker(gid("im-"+it.uid).querySelector(".flag"),tk,it,"in");
       attachMarker(gid("em-"+it.uid).querySelector(".flag"),tk,it,"end"); updateTL(it); }
   });
-  updateTotals(); renderTransport();
+  updateTotals(); renderTransport(); updateCurList();
 }
 function updateTotals(){ gid("cnt").textContent=setlist.length;
   gid("tot").textContent=fmt(setlist.reduce((a,x)=>a+((x.d!=null?(x.end-x.in):0)),0)); }
@@ -655,6 +685,13 @@ function compact(list){ return list.map(x=> x.source==="yt"
 function expand(arr){ return (arr||[]).map(o=> o.s==="y"
   ? {uid:uid(),source:"yt",yt:{vid:o.v},title:o.t,artist:o.a||"YouTube",art:ythumb(o.v),d:o.d>0?o.d:null,in:o.i||0,end:o.e>0?o.e:0,pos:0}
   : {uid:uid(),source:"sp",sp:{uri:o.u,id:o.id},title:o.t,artist:o.a,art:o.r||"",d:o.d>0?o.d:null,in:o.i||0,end:o.e>0?o.e:0,pos:0} ); }
+/* codec compacto para el LINK (sin títulos: se recuperan al cargar/reproducir) — mantiene el link corto */
+function packShare(list){ return list.map(x=>{ const i=Math.round(x.in||0),e=Math.round(x.end||0);
+  return (x.source==="yt"?"y."+x.yt.vid:"p."+x.sp.id)+"."+i+"."+e; }).join("~"); }
+function unpackShare(str){ return str.split("~").filter(Boolean).map(tok=>{ const p=tok.split("."); const s=p[0],id=p[1],i=+p[2]||0,e=+p[3]||0;
+  return s==="y" ? {uid:uid(),source:"yt",yt:{vid:id},title:"",artist:"YouTube",art:ythumb(id),d:null,in:i,end:e,pos:0}
+                 : {uid:uid(),source:"sp",sp:{uri:"spotify:track:"+id,id},title:"",artist:"",art:"",d:null,in:i,end:e,pos:0}; }); }
+function fillTitlesAfterLoad(){ setlist.forEach(x=>{ if(x.source==="yt" && !x.title) ytFetchTitle(x); }); }
 function getLists(){ try{return JSON.parse(localStorage.getItem(LS.lists)||"{}");}catch(e){return {};} }
 function setLists(o){ localStorage.setItem(LS.lists,JSON.stringify(o)); }
 function refreshLists(){ const sel=gid("loadList"); const o=getLists(); const names=Object.keys(o).sort();
@@ -668,11 +705,14 @@ function loadListByName(name){ if(!name)return; const o=getLists(); if(!o[name])
   setlist=expand(o[name]); curUid=null; playingUid=null; gid("listName").value=name; persist(); renderSet(); toast(`Lista "${name}" cargada`); }
 function deleteList(){ const name=gid("loadList").value; if(!name){toast("Elegí una lista para borrar");return;}
   if(!confirm(`¿Borrar la lista "${name}"?`))return; const o=getLists(); delete o[name]; setLists(o); refreshLists(); toast(`Lista "${name}" borrada`); }
+function shareUrl(){ return location.origin+location.pathname+"#s2="+packShare(setlist); }
 function shareLink(){ if(!setlist.length){toast("El set está vacío");return;}
-  const payload=b64enc(JSON.stringify(compact(setlist)));
-  const url=location.origin+location.pathname+"#s="+payload;
-  if(url.length>16000){ toast("El set es muy grande para link; usá 'Bajar archivo' y envialo."); return; }
-  navigator.clipboard.writeText(url).then(()=>toast("Link copiado — pegáselo al artista")).catch(()=>{ prompt("Copiá este link para el artista:",url); }); }
+  const url=shareUrl();
+  gid("shareUrlInput").value=url;
+  gid("shareQr").src="https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&data="+encodeURIComponent(url);
+  gid("shareLen").textContent=url.length+" caracteres";
+  gid("shareModal").style.display="flex";
+}
 function exportJson(){ if(!setlist.length)return toast("Set vacío");
   const name=(gid("listName").value.trim()||"setlist-ysya");
   download(name.replace(/[^\w-]+/g,"_")+".json", JSON.stringify({name,tracks:compact(setlist)},null,2), "application/json"); }
@@ -683,16 +723,22 @@ function importJson(file){ const r=new FileReader();
       setlist=expand(arr); curUid=null; playingUid=null; if(d.name)gid("listName").value=d.name; persist(); renderSet(); toast("Lista importada"); }
     catch(e){ toast("No pude leer el archivo (¿es una lista válida?)"); } };
   r.readAsText(file); }
-function checkSharedSet(){ if(!location.hash.startsWith("#s="))return;
-  let arr; try{ arr=JSON.parse(b64dec(location.hash.slice(3))); }catch(e){ return; }
+function checkSharedSet(){
+  const h=location.hash; let items=null;
+  if(h.startsWith("#s2=")){ try{ items=unpackShare(decodeURIComponent(h.slice(4))); }catch(e){ return; } }
+  else if(h.startsWith("#s=")){ try{ items=expand(JSON.parse(b64dec(h.slice(3)))); }catch(e){ return; } }
+  else return;
+  if(!items || !items.length) return;
   history.replaceState({},"",location.pathname);
   const b=gid("shareBanner"); b.style.display="flex";
-  b.innerHTML=`<span>📥 <b class="bt">Te compartieron un set de ${arr.length} tema(s).</b> ¿Cargarlo?</span><span class="sp"></span>`;
+  b.innerHTML=`<span>📥 <b class="bt">Te compartieron un set de ${items.length} tema(s).</b> ¿Cargarlo?</span><span class="sp"></span>`;
   const load=document.createElement("button"); load.className="sm primary"; load.textContent="Cargar set";
   load.onclick=()=>{ if(setlist.length && !confirm("Cargar reemplaza tu set actual. ¿Seguir?"))return;
-    setlist=expand(arr); curUid=null; playingUid=null; persist(); renderSet(); b.style.display="none"; toast("Set cargado"); };
+    setlist=items; curUid=null; playingUid=null; persist(); renderSet(); fillTitlesAfterLoad(); b.style.display="none"; toast("Set cargado"); };
   const no=document.createElement("button"); no.className="sm ghost"; no.textContent="Descartar"; no.onclick=()=>b.style.display="none";
   b.appendChild(load); b.appendChild(no); }
+
+function updateCurList(){ const n=(gid("listName").value||"").trim(); const el=gid("curList"); if(el) el.textContent = n ? "· "+n : ""; }
 
 /* ============ init ============ */
 function init(){
@@ -727,6 +773,12 @@ function init(){
   gid("expJson").addEventListener("click",exportJson);
   gid("impBtn").addEventListener("click",()=>gid("impFile").click());
   gid("impFile").addEventListener("change",e=>{ if(e.target.files[0])importJson(e.target.files[0]); e.target.value=""; });
+  gid("listName").addEventListener("input",updateCurList);
+  // modal compartir
+  gid("shareClose").addEventListener("click",()=>gid("shareModal").style.display="none");
+  gid("shareModal").addEventListener("click",e=>{ if(e.target.id==="shareModal") gid("shareModal").style.display="none"; });
+  gid("shareCopy").addEventListener("click",()=>{ const i=gid("shareUrlInput"); i.select(); navigator.clipboard.writeText(i.value).then(()=>toast("Link copiado")).catch(()=>{}); });
+  gid("shareFileBtn").addEventListener("click",exportJson);
   refreshLists();
   checkSharedSet();
 
